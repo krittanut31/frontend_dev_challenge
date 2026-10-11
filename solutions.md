@@ -345,6 +345,76 @@ tomorrow's 05:30 window.
 
 ---
 
+## RES-105 · Home feed is janky and memory keeps climbing
+
+**Root causes.**
+1. **The whole screen rebuilt on every scroll pixel.** `HomeScreen` wrapped
+   the entire `Scaffold` in one `Obx` that read `scrollOffset`, and
+   `HomeController._onScroll` wrote the offset on every scroll event. The
+   value was only used for two thresholds (app-bar shadow at > 4 px, the
+   scroll-to-top button at > 800 px), but each pixel rebuilt the app bar,
+   the `SmartRefresher`, the list and every card.
+2. **Every rebuild created every card.** The feed was
+   `ListView(children: [...visibleDeals.map(DealCard)])`. Elements are
+   still mounted lazily by the sliver, but the list of `DealCard` widgets
+   for *all* loaded deals (up to 122) was allocated on every build, so the
+   cost of (1) grew with each page loaded.
+3. **Images were decoded at source size.** The API serves 1600×1200 photos;
+   `CachedNetworkImage` decoded them at full size (~7.7 MB of pixels each)
+   to fill 160 dp-tall cards. The 100 MB image cache was full after 13
+   images, so scrolling churned through decode/evict of very large bitmaps.
+
+**Fixes.**
+1. `scrollOffset` replaced by `isScrolled` / `showScrollToTop` `RxBool`s.
+   Rx only notifies when the value changes, so these fire once when a
+   threshold is crossed, not per pixel. `Obx` is scoped to what each part
+   shows: the app bar (shadow), the body (loading, deals, filter), the
+   filter chip, and the FAB.
+2. `ListView.builder`, so only cards near the viewport are created.
+3. `TheNetworkImage` passes `memCacheWidth` (or `memCacheHeight` for boxes
+   taller than wide) = laid-out size × device pixel ratio. Only one side is
+   set so the aspect ratio is kept. `width: double.infinity` falls back to
+   the layout width (a bug in my first version, caught by reviewing the
+   call sites and now covered by `test/the_network_image_test.dart`).
+
+**Measurements.** Temporary instrumentation (not committed) counted rebuilds
+with `debugOnRebuildDirtyWidget`, frame timings with
+`addTimingsCallback`, and read `imageCache` and `ProcessInfo.currentRss`
+every second, while an adb script made the same 60 flings through all 7
+pages. Android emulator (API 37, Skia), debug build:
+
+| | before | after |
+|---|---|---|
+| `DealCard` rebuilds during the scroll | 716 | 154 |
+| all widget rebuilds during the scroll | 55,188 | 9,183 |
+| decoded size per card image | ~7.7 MB | ~3.0 MB |
+| images held by the full 100 MB cache | 13 | 35 |
+| peak RSS (debug / profile) | 484 / 317 MB | 471 / 301 MB |
+
+**What these numbers do not show.** Frame times on this emulator are not
+usable: it renders on the CPU (no GPU, the same reason Impeller fails), so
+raster p90 is ~380–490 ms in both versions, even in profile mode, and the
+frame rate is raster-bound before and after. Peak RSS barely moves because
+the image cache was already capped at 100 MB; the fix makes each image
+2.6× cheaper rather than lowering the cap. Frame-time and memory evidence
+from DevTools should be captured on a physical mid-range device in profile
+mode; I have not done that.
+
+**Alternatives considered.**
+- *Throttling the scroll listener.* Fewer updates, but still rebuilds the
+  whole screen each time; the problem is the scope, not the rate.
+- *`NotificationListener<ScrollNotification>` with a `StatefulWidget` for
+  the shadow.* Also fine; the two `RxBool`s keep the controller pattern the
+  codebase already uses.
+- *Lowering `imageCache.maximumSizeBytes`.* A global policy change that
+  trades memory for re-decoding; with right-sized decodes the default cap
+  holds 35 card images, so I left it.
+
+**Not changed.** Card images still show a shimmer while loading, which
+animates every frame per loading card; that is intended UX.
+
+---
+
 ## AI usage log
 
 _To fill in as I go._
