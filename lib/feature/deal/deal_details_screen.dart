@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import '../../app_config.dart';
+import '../../model/deal_model.dart';
+import '../../routes/routes.dart';
 import '../shared_widget/the_network_image.dart';
 import 'deal_details_controller.dart';
 
@@ -10,11 +12,59 @@ class DealDetailsScreen extends GetView<DealDetailsController> {
 
   @override
   Widget build(BuildContext context) {
-    final deal = controller.deal;
+    // A deep link on a cold start opens this page as the only route. Send
+    // "back" to Home then, instead of leaving the user with no way into the
+    // rest of the app.
+    final isRoot = !Navigator.of(context).canPop();
+    return PopScope(
+      canPop: !isRoot,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) Get.offAllNamed(Routes.home);
+      },
+      child: Obx(() {
+        final deal = controller.deal.value;
+        if (deal == null) return _buildPlaceholder(isRoot);
+        return _buildDeal(deal, isRoot);
+      }),
+    );
+  }
+
+  Widget? _homeButton(bool isRoot) => isRoot
+      ? IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Get.offAllNamed(Routes.home),
+        )
+      : null;
+
+  /// Shown while a deep-linked deal is loading, or if loading it failed.
+  Widget _buildPlaceholder(bool isRoot) {
+    return Scaffold(
+      appBar: AppBar(leading: _homeButton(isRoot)),
+      body: Center(
+        child: controller.loadFailed.value
+            ? Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text("Couldn't load this deal",
+                      style: TextStyle(color: Colors.grey.shade700)),
+                  const SizedBox(height: 12),
+                  FilledButton(
+                    onPressed: controller.loadDeal,
+                    child: const Text('Try again'),
+                  ),
+                ],
+              )
+            : const CircularProgressIndicator(),
+      ),
+    );
+  }
+
+  Widget _buildDeal(DealModel deal, bool isRoot) {
     return Scaffold(
       body: CustomScrollView(
         slivers: [
           SliverAppBar(
+            leading: _homeButton(isRoot),
             expandedHeight: 240,
             pinned: true,
             flexibleSpace: FlexibleSpaceBar(
