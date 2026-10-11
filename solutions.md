@@ -170,6 +170,72 @@ is covered by the tests only.
 
 ---
 
+## RES-107 · Deep link opens to a crash
+
+**Root cause.** `DealDetailsController.onInit` took the deal only from
+`Get.arguments as DealModel`. In-app taps (`DealCard`, the flash rail) pass
+the model as `arguments`, but a deep link is just a URL:
+`rescu://open/deal?id=42&source=push` becomes the route
+`/deal?id=42&source=push` with no arguments, so `null as DealModel` threw.
+The id the page needs was already in the route; nothing read it.
+
+**Fix.**
+1. The route id is the source of truth. If a `DealModel` was passed *and* its
+   id matches the route, it is shown immediately (no extra request, same as
+   before for in-app taps). Otherwise the page fetches `GET /deals/:id`,
+   shows a spinner, and on failure shows "Couldn't load this deal" with a
+   *Try again* button. That is a transient-failure state, not the fallback
+   screen the ticket rules out: the fake API fails intermittently, and a
+   retry lands on the working deal page.
+2. Cold start. When the link opens the app from scratch, GetX builds the
+   navigation stack from the deep-link route alone
+   (`GetMaterialApp.initialRoutesGenerate`), so the deal page had no back
+   button and system back did not lead into the app. When the page is the
+   root route it now shows a back button, and system back goes to Home
+   (`PopScope` + `Get.offAllNamed(Routes.home)`). A user arriving from a
+   push notification can buy the deal and then continue browsing.
+
+`deal_details_view` analytics now use the id from the route, so deep-link
+views are logged with `source: push`.
+
+**Alternatives considered.**
+- *Passing the model from the deep-link handler.* There is no handler to
+  change for real links: Flutter's built-in deep linking pushes the route
+  name itself. The page has to work from the URL alone.
+- *Redirect middleware that fetches the deal before the page opens.*
+  Navigation would block on a network call with nothing on screen, and the
+  failure case would still need a home.
+- *A `/` route redirecting to Home, so Flutter builds `/` + `/deal`.* GetX
+  replaces the initial-route generator when `getPages` is set and only builds
+  the deep-link route, so this has no effect.
+
+**Edge cases.**
+- An argument whose id does not match the route is ignored in favour of the
+  route.
+- A route with a missing or non-numeric id shows the retry state (logged),
+  rather than crashing.
+- Not handled: an id that does not exist (404) shows the same retry state.
+  Deal 42 exists, and a dedicated "deal no longer available" screen is a
+  product decision.
+
+**Verification.** `test/deal_details_deep_link_test.dart`:
+- navigating to `/deal?id=42&source=push` with no arguments failed with the
+  ticket's exact error (`type 'Null' is not a subtype of type 'DealModel'`)
+  before the fix; it now shows a spinner, then the deal and *Add to bag*,
+  and logs `{deal_id: 42, source: push}`;
+- a failed load shows *Try again*, which recovers;
+- an in-app tap with the model renders at once with no request;
+- starting the app at the deal route, both the app-bar back button and system
+  back lead to Home (both failed before the second commit).
+
+On the Android emulator: `adb shell am start ... "rescu://open/deal?id=42&source=push"`
+with the app running opens deal 42 and *Add to bag* works; with the app
+stopped, the deal page opens, and both back paths reach Home. (Launching the
+debug APK outside `flutter run` uses Impeller, which hangs on this emulator;
+the cold-start checks were done with `--no-enable-impeller --route`.)
+
+---
+
 ## AI usage log
 
 _To fill in as I go._
