@@ -494,6 +494,66 @@ the home screen.
 
 ---
 
+## F-2 · Impression tracking
+
+**Design.**
+- **`ImpressionDetector`** (per card) wraps the card in a `VisibilityDetector`.
+  When at least 50% is visible it arms a one-second timer; dropping below
+  50% or being disposed cancels it, so the second has to be continuous. It
+  never calls `setState`, so it adds no rebuilds while scrolling.
+- **`ImpressionTracker`** (app-wide `GetxService`) owns the rules that are
+  not about one card:
+  - *Once per deal per session, across screens*: a set of seen deal ids.
+    The first source wins (flash rail, then home feed, would log
+    `flash_rail`).
+  - *Batching*: events queue up; the queue is sent with
+    `FakeApiService.sendAnalyticsBatch` as soon as it holds 10, otherwise by a
+    timer started at the first unsent event (15 s). A failed send puts the
+    events back at the front and re-arms the timer. Pending events are also
+    flushed when the app goes to the background, so they are not lost if the
+    OS kills it there.
+  - Events also go through `AnalyticsService.logEvent`, so they show on the
+    Analytics debug screen (`logEvent` now returns the event it recorded).
+- **Sources and positions**: home feed cards `home_feed`, flash rail
+  `flash_rail`, search results `search`; `position` is the index in the list
+  as displayed (with "Pickup today" on, the filtered list). The home feed
+  used `source: 'home'` before; it is now `home_feed`, which also changes the
+  `source` of `deal_details_view` from the feed to match the spec's name.
+
+**Decision: visibility update interval.** `visibility_detector` batches its
+reports every 500 ms by default. For a one-second rule that means a card
+could be counted though it left the screen up to half a second before the
+timer fired. I set `updateInterval` to 200 ms: the error is bounded at
+0.2 s and callbacks stay batched. Computing visibility myself from the
+scroll offset and item extents would be exact but fragile (variable card
+heights, the horizontal rail inside a vertical list).
+
+**Performance.** Same adb scroll as RES-105 (Android emulator, debug):
+widget rebuilds during the scroll were 7,864 before F-1, 8,096 with F-1
+and 8,259 with F-1 + F-2; `DealCard` rebuilds 144 / 147 / 147. Frame
+counts (126 / 106 / 113) are within this emulator's run-to-run variance:
+the same pre-F-1 code gave 249 frames earlier in the day, so they cannot
+show a regression either way. Not profiled on a real device.
+
+**Verification.** `test/impression_tracking_test.dart`: a batch at the 10th
+event; a batch 15 s after the first unsent event (and a fresh window after
+it); one impression per deal across three sources; retry after a failed
+batch; cards visible for 1 s counted at exactly 1 s and not at 0.9 s; cards
+scrolled away at 0.5 s not counted; a card pushed below 50% not counted
+while the one coming in above 50% is. In the app, the scroll run above
+logged 35 `deal_impression` events and four `POST /analytics/batch` calls
+(10, 6, 10, 9 events: full batches and 15-second flushes).
+
+**Edge cases not handled.**
+- `VisibilityDetector` does not see widgets drawn on top of a card. When a
+  page is pushed, the feed underneath is still painted during the route
+  transition (about 300 ms), so a card whose second was almost up can still
+  be counted; once the transition ends the feed is offstage and reports 0.
+- Events are kept in memory only; if the app is killed while in the
+  foreground, unsent events (at most 9, at most 15 s old) are lost.
+
+---
+
 ## AI usage log
 
 _To fill in as I go._
