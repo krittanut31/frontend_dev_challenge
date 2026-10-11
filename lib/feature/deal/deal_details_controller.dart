@@ -93,7 +93,9 @@ class DealDetailsController extends GetxController {
   void addToCart() {
     final current = deal.value;
     if (current == null) return;
-    cartService.add(current);
+    // The button is disabled once a flash sale ends, but the cart is the one
+    // that enforces it (the sale can end between build and tap).
+    if (!cartService.add(current)) return;
     Get.snackbar(
       'Added to bag',
       '${current.name} — pick up ${current.pickupWindow.label}',

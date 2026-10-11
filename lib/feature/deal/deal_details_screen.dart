@@ -4,6 +4,7 @@ import 'package:get/get.dart';
 import '../../app_config.dart';
 import '../../model/deal_model.dart';
 import '../../routes/routes.dart';
+import '../shared_widget/flash_countdown.dart';
 import '../shared_widget/the_network_image.dart';
 import 'deal_details_controller.dart';
 
@@ -110,6 +111,10 @@ class DealDetailsScreen extends GetView<DealDetailsController> {
                           )),
                     ],
                   ),
+                  if (deal.flashSaleEndsAt != null) ...[
+                    const SizedBox(height: 12),
+                    _FlashSaleBanner(endsAt: deal.flashSaleEndsAt!),
+                  ],
                   const SizedBox(height: 16),
                   Container(
                     padding: const EdgeInsets.all(12),
@@ -180,13 +185,59 @@ class DealDetailsScreen extends GetView<DealDetailsController> {
         color: Colors.white,
         child: SizedBox(
           width: double.infinity,
-          child: FilledButton.icon(
-            onPressed: controller.addToCart,
-            icon: const Icon(Icons.add_shopping_cart),
-            label: const Text('Add to bag'),
-          ),
+          child: deal.flashSaleEndsAt == null
+              ? _addToBagButton(isExpired: false)
+              : FlashExpiryBuilder(
+                  endsAt: deal.flashSaleEndsAt!,
+                  builder: (context, isExpired) =>
+                      _addToBagButton(isExpired: isExpired),
+                ),
         ),
       ),
+    );
+  }
+
+  Widget _addToBagButton({required bool isExpired}) {
+    return FilledButton.icon(
+      onPressed: isExpired ? null : controller.addToCart,
+      icon: Icon(isExpired ? Icons.timer_off_outlined : Icons.add_shopping_cart),
+      label: Text(isExpired ? 'Flash sale ended' : 'Add to bag'),
+    );
+  }
+}
+
+/// "Flash sale ends in 12:34", switching to "Flash sale ended" at zero.
+class _FlashSaleBanner extends StatelessWidget {
+  final DateTime endsAt;
+
+  const _FlashSaleBanner({required this.endsAt});
+
+  @override
+  Widget build(BuildContext context) {
+    return FlashExpiryBuilder(
+      endsAt: endsAt,
+      builder: (context, isExpired) {
+        final color = isExpired ? Colors.grey.shade700 : Colors.red.shade700;
+        final style = TextStyle(
+            fontSize: 14, fontWeight: FontWeight.w600, color: color);
+        return Row(
+          children: [
+            Icon(isExpired ? Icons.timer_off_outlined : Icons.bolt,
+                size: 18, color: color),
+            const SizedBox(width: 6),
+            if (isExpired)
+              Text('Flash sale ended', style: style)
+            else ...[
+              Text('Flash sale ends in ', style: style),
+              FlashCountdownText(
+                endsAt: endsAt,
+                style: style.copyWith(
+                    fontFeatures: const [FontFeature.tabularFigures()]),
+              ),
+            ],
+          ],
+        );
+      },
     );
   }
 }

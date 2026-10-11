@@ -4,6 +4,7 @@ import 'package:get/get.dart';
 import '../../app_config.dart';
 import '../../model/deal_model.dart';
 import '../../routes/routes.dart';
+import 'flash_countdown.dart';
 import 'the_network_image.dart';
 
 /// Deal card used in the home feed and search results.
@@ -15,16 +16,31 @@ class DealCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
+    final endsAt = deal.flashSaleEndsAt;
+    if (endsAt == null) return _buildCard(isExpired: false);
+    // Rebuilds the card once, when the sale ends; the countdown text inside
+    // updates on its own every second.
+    return FlashExpiryBuilder(
+      endsAt: endsAt,
+      builder: (context, isExpired) => _buildCard(isExpired: isExpired),
+    );
+  }
+
+  Widget _buildCard({required bool isExpired}) {
+    final card = Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       clipBehavior: Clip.antiAlias,
       color: Colors.white,
       elevation: 0.5,
       child: InkWell(
-        onTap: () => Get.toNamed(
-          Routes.dealRoute(deal.id, source: source),
-          arguments: deal,
-        ),
+        // An ended flash deal can no longer be bought, so the card is
+        // disabled rather than leading to a page with nothing to do.
+        onTap: isExpired
+            ? null
+            : () => Get.toNamed(
+                  Routes.dealRoute(deal.id, source: source),
+                  arguments: deal,
+                ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -35,20 +51,8 @@ class DealCard extends StatelessWidget {
                   Positioned(
                     top: 8,
                     left: 8,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.red.shade600,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: const Text(
-                        'FLASH SALE',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold),
-                      ),
-                    ),
+                    child: _FlashBadge(
+                        endsAt: deal.flashSaleEndsAt!, isExpired: isExpired),
                   ),
                 Positioned(
                   top: 8,
@@ -137,6 +141,41 @@ class DealCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+    return isExpired ? Opacity(opacity: 0.55, child: card) : card;
+  }
+}
+
+/// "FLASH SALE · 12:34" while the sale runs, "EXPIRED" once it has ended.
+class _FlashBadge extends StatelessWidget {
+  final DateTime endsAt;
+  final bool isExpired;
+
+  const _FlashBadge({required this.endsAt, required this.isExpired});
+
+  @override
+  Widget build(BuildContext context) {
+    const style = TextStyle(
+        color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: isExpired ? Colors.grey.shade700 : Colors.red.shade600,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: isExpired
+          ? const Text('EXPIRED', style: style)
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('FLASH SALE · ', style: style),
+                FlashCountdownText(
+                  endsAt: endsAt,
+                  style: style.copyWith(
+                      fontFeatures: const [FontFeature.tabularFigures()]),
+                ),
+              ],
+            ),
     );
   }
 }
