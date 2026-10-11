@@ -116,6 +116,41 @@ void main() {
     expect(find.text('Surprise Sushi Box'), findsOneWidget);
   });
 
+  group('cold start, deal page is the only route', () {
+    Future<void> pumpColdStart(WidgetTester tester) async {
+      repo.pending = Completer();
+      await tester.pumpWidget(GetMaterialApp(
+        initialRoute: '/deal?id=42&source=push',
+        getPages: [
+          GetPage(name: Routes.home, page: () => const Text('home screen')),
+          ...Routes.pages.where((p) => p.name == Routes.deal),
+        ],
+      ));
+      repo.pending.complete(_deal(42, 'Surprise Sushi Box'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.text('Surprise Sushi Box'), findsOneWidget);
+    }
+
+    testWidgets('the app bar back button goes to Home', (tester) async {
+      await pumpColdStart(tester);
+
+      await tester.tap(find.byIcon(Icons.arrow_back));
+      await tester.pumpAndSettle();
+
+      expect(find.text('home screen'), findsOneWidget);
+    });
+
+    testWidgets('the system back button goes to Home', (tester) async {
+      await pumpColdStart(tester);
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+
+      expect(find.text('home screen'), findsOneWidget);
+    });
+  });
+
   testWidgets('an in-app tap with the deal as argument renders at once',
       (tester) async {
     await pumpApp(tester);
