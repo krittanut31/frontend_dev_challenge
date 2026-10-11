@@ -102,6 +102,14 @@ void main() {
     expect(controller.isLoading.value, isFalse);
   });
 
+  testWidgets('leaving the screen cancels a pending search', (tester) async {
+    controller.onQueryChanged('sushi');
+    Get.delete<SearchDealsController>();
+    await tester.pump(const Duration(seconds: 1));
+
+    expect(repo.calls, isEmpty);
+  });
+
   testWidgets('fast typing sends only the final query', (tester) async {
     for (final q in ['s', 'su', 'sus', 'sush', 'sushi']) {
       controller.onQueryChanged(q);
