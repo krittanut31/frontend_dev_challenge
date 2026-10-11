@@ -66,6 +66,42 @@ single `GET /deals/search?q=sushi` and shows only sushi deals.
 
 ---
 
+## RES-102 · Crash after leaving My orders
+
+**Root cause.** `PickupCountdown` starts a `Timer.periodic` in `initState`
+that calls `setState` every second, but never keeps a reference to it and
+never cancels it. Navigating back disposes the `State`, yet the timer keeps
+firing, so the next tick calls `setState` on a defunct `State` and Flutter
+throws `setState() called after dispose()`. Only active orders show a
+countdown, which is why the ticket needs an order with an upcoming pickup.
+Each visit also leaked one timer per countdown for the rest of the session.
+
+**Fix.** Keep the timer in a field and cancel it in `dispose()`. The timer's
+lifetime now matches the widget that owns it.
+
+**Alternatives considered.**
+- *`if (mounted) setState(...)`.* Rejected: it hides the crash but the timers
+  keep running forever, one more set per visit. That is exactly the
+  symptom-hiding fix the brief warns against.
+- *Moving the tick into `OrdersController`.* A shared one-second ticker in the
+  controller would also work, and GetX would close it in `onClose`, but the
+  countdown is purely presentational and local to this widget, so the widget
+  is the right owner. Worth revisiting if F-1 introduces a shared clock.
+
+**Edge cases.**
+- The timer keeps ticking after the pickup window opens, although the text no
+  longer changes. Harmless and cheap; left as is to keep the fix minimal.
+- Each card rebuilds only its own `PickupCountdown`, not the list, so the
+  per-second rebuild is already scoped to the changing text.
+
+**Verification.** `test/pickup_countdown_test.dart` pumps the widget, removes
+it from the tree and advances the clock 3 s. It failed with the exact error
+from the ticket before the fix and passes after. Manually, on the Android
+emulator, opening My orders (three countdowns) and going back produces no
+error in the console.
+
+---
+
 ## AI usage log
 
 _To fill in as I go._
