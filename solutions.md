@@ -281,6 +281,70 @@ lifecycle.
 
 ---
 
+## RES-106 · Wrong pickup times; "Pickup today" filter misses deals
+
+**Root cause.** The backend is right: it sends UTC instants
+(`2026-01-01T23:00:00.000Z`). `DateTime.parse` keeps those as **UTC**
+`DateTime`s, and `PickupWindowModel` then read them as if they were local
+wall-clock times:
+
+- `label` formatted `start`/`end` with `DateFormat('HH:mm')`, which prints the
+  UTC hour. A bakery open 06:00–09:30 in Bangkok (UTC+7) is 23:00–02:30 UTC,
+  exactly the label in the ticket. People read the wrong hours and went to
+  closed stores; `isOpenNow` itself compares instants and was correct.
+- `isToday` compared `start.day` (the UTC day of month) with
+  `DateTime.now().day` (the local one). Every window starting before 07:00
+  Bangkok time falls on the previous UTC day, so early stores disappeared
+  from "Pickup today", while tomorrow's early windows (still "today" in UTC)
+  showed up. It also compared only the day of the month, so 2 January and
+  2 February matched.
+
+**Fix.** Keep `start`/`end` as UTC instants (the existing `model_test.dart`
+asserts `isUtc`, and instants are the right storage) and convert to local
+time exactly where a wall clock is read:
+- `label` formats `start.toLocal()` / `end.toLocal()`;
+- "today" means the window **overlaps the local calendar day** of `now`. That
+  also counts an overnight window that started yesterday at 22:00 and is
+  still open at 00:30, which "starts today" would miss.
+
+**Alternatives considered.**
+- *`.toLocal()` in `fromJson`.* Fixes the symptoms too, but breaks the
+  model's existing contract (and test) that it holds UTC instants, and hides
+  the conversion from readers of the model.
+- *Formatting in the store's time zone instead of the device's.* More correct
+  for a user looking at Bangkok stores from abroad, but the API sends no time
+  zone, and hard-coding UTC+7 in the app would duplicate a backend detail. For
+  users in the market the two are the same.
+- *Comparing `start.toLocal().day == now.day`.* Fixes the time-zone part but
+  keeps the month bug and misses overnight windows.
+
+**Edge cases.** Overnight windows (22:00–01:00) format and filter correctly
+(tests). Windows the backend has rolled to tomorrow are excluded. Not
+handled: time-zone changes while the app is open re-evaluate on the next
+build, which is fine for a label.
+
+**Making it testable (Q3).** `isToday` read `DateTime.now()` directly, so a
+test could only run "now". A first, behaviour-preserving commit added
+`isTodayAt(DateTime now)` with `isToday` delegating to it. The tests in
+`test/pickup_window_model_test.dart` build the API payload from a *local*
+wall-clock time converted to UTC, as the backend does, so they hold in any
+zone except UTC, where this bug cannot appear. Run under several zones:
+
+```
+TZ=Asia/Bangkok flutter test     # before the fix: label '23:00 – 02:30'
+TZ=America/New_York flutter test
+TZ=Pacific/Kiritimati flutter test
+```
+
+Before the fix, Bangkok failed 5 of 7 (including the exact ticket label) and
+even UTC failed the month and overnight cases. After the fix, all tests pass
+in all four zones. On the Android emulator (Asia/Bangkok), Baan Somtam
+Kitchen now shows "05:30 – 08:00" instead of "22:30 – 01:00", and at 11:05
+"Pickup today" lists tonight's 22:00–01:00 windows and no longer lists
+tomorrow's 05:30 window.
+
+---
+
 ## AI usage log
 
 _To fill in as I go._
