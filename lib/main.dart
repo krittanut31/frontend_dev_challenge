@@ -7,6 +7,7 @@ import 'repository/order_repo.dart';
 import 'repository/store_repo.dart';
 import 'routes/routes.dart';
 import 'service/analytics_service.dart';
+import 'service/cart_notice_service.dart';
 import 'service/cart_service.dart';
 import 'service/clock_service.dart';
 import 'service/fake_api_service.dart';
@@ -28,11 +29,20 @@ Future<void> initDependencies() async {
     permanent: true,
   );
   final clock = Get.put(ClockService(), permanent: true);
-  final cart = Get.put(CartService(clock: clock.current), permanent: true);
-  Get.put(FlashSaleExpiryService(clock: clock, cart: cart), permanent: true);
   Get.lazyPut(() => DealRepo(api: Get.find()), fenix: true);
   Get.lazyPut(() => StoreRepo(api: Get.find()), fenix: true);
   Get.lazyPut(() => OrderRepo(api: Get.find()), fenix: true);
+  final cart = Get.put(
+    CartService(
+      clock: clock.current,
+      reserve: (dealId, {quantity = 1}) =>
+          Get.find<OrderRepo>().reserve(dealId, quantity: quantity),
+      release: (id) => Get.find<OrderRepo>().releaseReservation(id),
+    ),
+    permanent: true,
+  );
+  Get.put(CartNoticeService(cart: cart), permanent: true);
+  Get.put(FlashSaleExpiryService(clock: clock, cart: cart), permanent: true);
 }
 
 class RescuApp extends StatelessWidget {
