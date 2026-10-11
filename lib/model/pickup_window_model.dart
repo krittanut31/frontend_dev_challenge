@@ -19,7 +19,10 @@ class PickupWindowModel {
       '${DateFormat('HH:mm').format(start)} – ${DateFormat('HH:mm').format(end)}';
 
   /// Whether pickup starts today.
-  bool get isToday => start.day == DateTime.now().day;
+  bool get isToday => isTodayAt(DateTime.now());
+
+  /// [isToday] relative to a given [now], so it can be tested at any time.
+  bool isTodayAt(DateTime now) => start.day == now.day;
 
   /// Whether the store is currently accepting pickups.
   bool get isOpenNow {
