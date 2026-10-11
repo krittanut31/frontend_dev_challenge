@@ -415,6 +415,85 @@ animates every frame per loading card; that is intended UX.
 
 ---
 
+## F-1 · Live flash-sale countdowns
+
+**Design.**
+- **One clock for the whole app.** `ClockService` owns a single
+  `Timer.periodic(1s)` and publishes `now` as an `Rx<DateTime>`. With 100+
+  countdowns there is still one timer, not one per card. The time source is
+  injectable (`ClockService(clock: ...)`) so tests drive it.
+- **Only the text rebuilds every second.** `FlashCountdownText` is an `Obx`
+  around a single `Text` that formats `endsAt - clock.now`. Nothing above it
+  reads the clock, so cards, the rail and the list are not rebuilt by ticks.
+- **The card changes state once.** `FlashExpiryBuilder` gives its builder
+  `isExpired` and arms a one-shot `Timer` for the moment the sale ends, so
+  the card rebuilds exactly once, when it becomes "Expired". (Deriving the
+  expired flag from `clock.now` inside an `Obx` would have rebuilt the whole
+  card every second.)
+- **Format.** `mm:ss`, `hh:mm:ss` from one hour, partial seconds rounded up
+  so `00:00` appears when time is up, not a second early
+  (`util/countdown_format.dart`, pure and unit-tested).
+- **Where it shows.** Flash rail (replaces "Ends soon"), home-feed and search
+  cards ("FLASH SALE · 12:34"), and the details page ("Flash sale ends in
+  12:34"). Digits use tabular figures so the text does not jitter.
+
+**At zero.**
+- Cards switch to a dimmed "Expired" state and are **not tappable**: the deal
+  can no longer be bought, so opening it would lead to a page with nothing
+  to do. The details page, if already open, shows "Flash sale ended" and
+  disables the button.
+- **The rule lives in the cart, not just the UI.** `CartService.add` refuses
+  an ended flash deal and now returns whether it added anything (the
+  details page only shows "Added to bag" when it did). The button can be
+  tapped in the same frame the sale ends; the cart is what guarantees it.
+- **Removal from the bag.** `FlashSaleExpiryService` (app-wide) runs on each
+  clock tick, asks the cart to remove ended flash lines
+  (`removeExpiredFlashDeals`), and shows a snackbar naming them. It is a
+  separate service so `CartService` stays free of UI calls and is testable
+  on its own. Removal happens within one second of the end, on any screen.
+
+**Performance evidence.** `test/flash_countdown_test.dart` builds a list of
+120 flash `DealCard`s, records every widget rebuild with
+`debugOnRebuildDirtyWidget`, and advances the clock 5 seconds: the only
+rebuilds are one `Obx` + `Text` per visible countdown per second (plus the
+image placeholder's shimmer, which animates regardless). `DealCard`,
+`FlashExpiryBuilder`, `Card`, `InkWell`, `Column`, `Stack` and `ListView`
+rebuild zero times. I have not profiled F-1 in DevTools on a real device
+(same emulator limits as RES-105).
+
+**Checked in the app** (Android emulator): countdowns run in the rail, the
+feed badge and the details page, and the same deal shows the same time in
+both places. I added *Last-call Bakery Box* (8-minute sale) to the bag and
+waited: at zero its rail card dimmed to "Expired" and the snackbar "Removed
+from your bag — The flash sale ended for Last-call Bakery Box." appeared on
+the home screen.
+
+**Alternatives considered.**
+- *A `Timer` or `StreamBuilder` per countdown.* Works, but 100+ timers firing
+  at slightly different phases means 100+ separate rebuild callbacks per
+  second instead of one notification.
+- *`AnimationController`/`Ticker` per countdown.* Ticks every frame (60/s)
+  for a value that changes once a second.
+- *Removing expired lines only when the bag is opened or at checkout.*
+  Simpler, but the brief asks for a visible notice when it happens, and the
+  bag badge would be wrong in the meantime.
+
+**Edge cases.**
+- A sale ending while the details page is open: banner and button switch at
+  zero, and the cart rejects a tap that races the switch.
+- The same deal in the rail and the feed counts down in sync (same clock).
+- Behaviour change: `CartService.add` returning false also stops the
+  "Added to bag" snackbar when the stock limit is reached, which previously
+  showed even though nothing was added.
+- Not handled: checkout in the sub-second window between a sale ending and
+  the next tick sends that line to the backend. With reservations (F-3) the
+  backend would reject it; without them I accepted the one-second window.
+- Not handled: device clock changes. The countdown trusts the device clock
+  against the server's `flashSaleEndsAt`; a skewed clock shows a skewed
+  countdown. A server time offset would fix that and is out of scope.
+
+---
+
 ## AI usage log
 
 _To fill in as I go._
