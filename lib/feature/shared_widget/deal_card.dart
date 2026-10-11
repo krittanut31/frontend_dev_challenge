@@ -5,6 +5,7 @@ import '../../app_config.dart';
 import '../../model/deal_model.dart';
 import '../../routes/routes.dart';
 import 'flash_countdown.dart';
+import 'impression_detector.dart';
 import 'the_network_image.dart';
 
 /// Deal card used in the home feed and search results.
@@ -12,10 +13,27 @@ class DealCard extends StatelessWidget {
   final DealModel deal;
   final String source;
 
-  const DealCard({super.key, required this.deal, this.source = 'home'});
+  /// Index in the list showing this card. When set, the card reports a
+  /// `deal_impression` (see [ImpressionDetector]).
+  final int? position;
+
+  const DealCard(
+      {super.key, required this.deal, this.source = 'home', this.position});
 
   @override
   Widget build(BuildContext context) {
+    final card = _buildFlashAware();
+    final index = position;
+    if (index == null) return card;
+    return ImpressionDetector(
+      dealId: deal.id,
+      source: source,
+      position: index,
+      child: card,
+    );
+  }
+
+  Widget _buildFlashAware() {
     final endsAt = deal.flashSaleEndsAt;
     if (endsAt == null) return _buildCard(isExpired: false);
     // Rebuilds the card once, when the sale ends; the countdown text inside
@@ -46,7 +64,8 @@ class DealCard extends StatelessWidget {
           children: [
             Stack(
               children: [
-                TheNetworkImage(url: deal.imageUrl, height: 160, width: double.infinity),
+                TheNetworkImage(
+                    url: deal.imageUrl, height: 160, width: double.infinity),
                 if (deal.isFlashSale)
                   Positioned(
                     top: 8,
@@ -58,7 +77,8 @@ class DealCard extends StatelessWidget {
                   top: 8,
                   right: 8,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
                       color: Colors.black.withValues(alpha: 0.65),
                       borderRadius: BorderRadius.circular(6),

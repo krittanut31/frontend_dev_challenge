@@ -108,8 +108,14 @@ class HomeScreen extends GetView<HomeController> {
           if (index == leading + deals.length) {
             return const SizedBox(height: 24);
           }
-          final deal = deals[index - leading];
-          return DealCard(key: ValueKey(deal.id), deal: deal);
+          final position = index - leading;
+          final deal = deals[position];
+          return DealCard(
+            key: ValueKey(deal.id),
+            deal: deal,
+            source: 'home_feed',
+            position: position,
+          );
         },
       ),
     );
