@@ -102,6 +102,66 @@ error in the console.
 
 ---
 
+## RES-104 · Duplicate deals in the home feed
+
+**Root cause.** `HomeController` mutated its paging state *before* a request
+finished, and never told an in-flight page request that the list it was meant
+for had been replaced:
+
+1. With 2 pages loaded, `loadMore` sets `_page = 3` and awaits page 3.
+2. Pull to refresh: `refreshDeals` sets `_page = 1` and awaits page 1.
+3. The refresh lands: the list is page 1 (20 items).
+4. Page 3 lands and is appended: the list is pages 1 + 3, `_page` is 1.
+5. Scrolling on loads page 2 and then page 3 *again*: duplicates, and more
+   items than the catalog once it reaches the end.
+
+A failed refresh caused the same thing on its own: `_page` was reset to 1
+before the request, so after a failure (the fake API fails intermittently)
+the old 60-item list stayed while the next scroll fetched page 2 again. The
+`_page--` rollback in `loadMore` could also undo a reset made by a refresh in
+between.
+
+**Fix.**
+- Paging state (`_page`, `_totalPages`) changes only when a response is
+  applied, never before the request.
+- `_listVersion` increases whenever a refresh replaces the list. `loadMore`
+  remembers the version it started with and drops its page if the list has
+  been replaced since. This also covers a load-more started *while* a
+  refresh was in flight.
+- `_latestRefreshId` makes only the most recent refresh replace the list.
+- A failed refresh keeps the current list and paging, and calls
+  `refreshFailed()` so the pull-to-refresh spinner stops (before, the
+  exception escaped and `refreshCompleted()` was never called).
+
+**Alternatives considered.**
+- *De-duplicating by `id` before appending.* Rejected: it hides the symptom.
+  The feed would still skip page 2 (pages 1 + 3 shown as if complete) and
+  paging would still be out of sync with the list.
+- *Blocking pull-to-refresh while a page is loading.* Users expect refresh to
+  work at any time, and it would not cover a failed refresh.
+- *Cancelling the in-flight request.* The fake API has no cancellation, and a
+  real one would still need the version check for a response already in
+  progress.
+
+**Edge cases.**
+- A load-more that lands *before* the refresh is harmless: the refresh
+  replaces the list afterwards (kept as a regression test).
+- A stale load-more still calls `loadComplete()` so the footer resets.
+- Not changed: after reaching the end (`loadNoData`), refreshing does not
+  reset the footer's "no more data" state. Out of scope for this ticket.
+
+**Verification.** `test/home_controller_test.dart` drives the controller with
+a fake repo whose pages resolve in a chosen order: page 3 after a refresh, a
+load-more started during a refresh, a failed refresh, and repeated
+refresh/load-more races until the end of the catalog. Three of these failed
+on the original code (with duplicates or more items than the catalog); the
+"page 3 lands first" case passed before and is kept as a guard. All pass
+after the fix. On the Android emulator, paging and pull-to-refresh still
+work; I could not hit the race timing reliably by hand, so the race itself
+is covered by the tests only.
+
+---
+
 ## AI usage log
 
 _To fill in as I go._

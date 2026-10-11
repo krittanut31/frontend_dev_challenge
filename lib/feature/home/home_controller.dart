@@ -24,6 +24,13 @@ class HomeController extends GetxController {
   int _totalPages = 1;
   bool _isFetchingMore = false;
 
+  /// Bumped whenever [deals] is replaced by a refresh. A page requested for
+  /// an older version of the list must not be appended to the new one.
+  int _listVersion = 0;
+
+  /// Only the most recent refresh may replace the list.
+  int _latestRefreshId = 0;
+
   bool get hasMore => _page < _totalPages;
 
   List<DealModel> get visibleDeals => todayOnly.value
@@ -56,11 +63,20 @@ class HomeController extends GetxController {
   }
 
   Future<void> refreshDeals() async {
-    _page = 1;
-    final res = await dealRepo.fetchDeals(page: 1);
-    _totalPages = res.totalPages;
-    deals.assignAll(res.items);
-    refreshController.refreshCompleted();
+    final refreshId = ++_latestRefreshId;
+    try {
+      final res = await dealRepo.fetchDeals(page: 1);
+      if (refreshId != _latestRefreshId) return;
+      _listVersion++;
+      _page = 1;
+      _totalPages = res.totalPages;
+      deals.assignAll(res.items);
+      refreshController.refreshCompleted();
+    } catch (e) {
+      if (refreshId != _latestRefreshId) return;
+      LogService.error('refresh failed', e);
+      refreshController.refreshFailed();
+    }
   }
 
   Future<void> loadMore() async {
@@ -70,14 +86,17 @@ class HomeController extends GetxController {
       return;
     }
     _isFetchingMore = true;
-    _page++;
+    final listVersion = _listVersion;
+    final nextPage = _page + 1;
     try {
-      final res = await dealRepo.fetchDeals(page: _page);
-      _totalPages = res.totalPages;
-      deals.addAll(res.items);
+      final res = await dealRepo.fetchDeals(page: nextPage);
+      if (listVersion == _listVersion) {
+        _page = nextPage;
+        _totalPages = res.totalPages;
+        deals.addAll(res.items);
+      }
     } catch (e) {
       LogService.error('loadMore failed', e);
-      _page--;
     }
     _isFetchingMore = false;
     refreshController.loadComplete();
