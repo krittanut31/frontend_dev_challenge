@@ -1,11 +1,17 @@
 import 'dart:async';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:get/get.dart';
+import 'package:rescu/feature/cart/cart_controller.dart';
 import 'package:rescu/model/cart_item_model.dart';
 import 'package:rescu/model/deal_model.dart';
+import 'package:rescu/model/order_model.dart';
 import 'package:rescu/model/reservation_model.dart';
+import 'package:rescu/repository/order_repo.dart';
 import 'package:rescu/service/api_exception.dart';
 import 'package:rescu/service/cart_service.dart';
+import 'package:rescu/service/fake_api_service.dart';
 
 /// A reservations backend whose every request the test resolves by hand.
 class _Holds {
@@ -39,6 +45,39 @@ class _Holds {
   void refuse() => requests.removeAt(0).c.completeError(const ApiException(
       'Could not reserve: someone grabbed the last one. Try again.',
       statusCode: 409));
+}
+
+class _FakeOrderRepo extends OrderRepo {
+  _FakeOrderRepo() : super(api: FakeApiService());
+
+  final checkouts = <List<Map<String, dynamic>>>[];
+  final failures = <ApiException>[];
+
+  @override
+  Future<OrderModel> checkout(List<CartItemModel> items) async {
+    checkouts.add([
+      for (final i in items)
+        {
+          'dealId': i.deal.id,
+          'quantity': i.quantity,
+          'reservationId': i.reservation?.id
+        }
+    ]);
+    if (failures.isNotEmpty) throw failures.removeAt(0);
+    return OrderModel.fromJson({
+      'id': 9101,
+      'dealId': items.first.deal.id,
+      'dealName': 'Order',
+      'storeName': 'Store',
+      'imageUrl': '',
+      'status': 'CONFIRMED',
+      'quantity': 1,
+      'total': 50,
+      'currencyCode': 'THB',
+      'pickupStart': '2026-01-01T10:00:00.000Z',
+      'pickupEnd': '2026-01-01T12:00:00.000Z',
+    });
+  }
 }
 
 DealModel _deal(int id, {int stock = 5}) => DealModel.fromJson({
@@ -175,6 +214,120 @@ void main() {
       await pumpEventQueue();
       expect(line(1).quantity, 1); // back to the fallback, not removed
       expect(line(1).reservation!.id, one);
+    });
+  });
+
+  group('checkout', () {
+    late _FakeOrderRepo orders;
+    late CartController controller;
+
+    setUp(() {
+      Get.testMode = true;
+      orders = _FakeOrderRepo();
+      controller = CartController(cartService: cart, orderRepo: orders);
+    });
+
+    tearDown(Get.reset);
+
+    /// Checkout shows snackbars, so these run inside an app.
+    Future<void> pumpApp(WidgetTester tester) =>
+        tester.pumpWidget(const GetMaterialApp(home: SizedBox()));
+
+    Future<void> settle(WidgetTester tester) async {
+      for (var i = 0; i < 5; i++) {
+        await tester.pump();
+      }
+    }
+
+    /// Lets snackbars run their course so no timers outlive the test.
+    Future<void> finish(WidgetTester tester) async {
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> addHeld(WidgetTester tester, int dealId) async {
+      cart.add(_deal(dealId));
+      holds.grant();
+      await settle(tester);
+    }
+
+    testWidgets('sends each line with its reservation id', (tester) async {
+      await pumpApp(tester);
+      await addHeld(tester, 1);
+      await addHeld(tester, 2);
+      final ids = [for (final l in cart.items) l.reservation!.id];
+
+      controller.checkout();
+      await settle(tester);
+
+      expect(orders.checkouts.single.map((i) => i['reservationId']), ids);
+      expect(cart.items, isEmpty);
+      await finish(tester);
+    });
+
+    testWidgets('expired holds are renewed before paying', (tester) async {
+      await pumpApp(tester);
+      await addHeld(tester, 1);
+      now = now.add(const Duration(minutes: 6)); // hold expired in the bag
+      expect(line(1).isHeldAt(now), isFalse);
+
+      controller.checkout();
+      await settle(tester);
+      expect(orders.checkouts, isEmpty); // not before the hold is renewed
+      final renewed = holds.grant();
+      await settle(tester);
+
+      expect(orders.checkouts.single.single['reservationId'], renewed);
+      await finish(tester);
+    });
+
+    testWidgets('a line that cannot be held again is removed, checkout stops',
+        (tester) async {
+      await pumpApp(tester);
+      await addHeld(tester, 1);
+      await addHeld(tester, 2);
+      now = now.add(const Duration(minutes: 6));
+
+      controller.checkout();
+      await settle(tester);
+      holds.grant(); // deal 1 renewed
+      holds.refuse(); // deal 2 gone
+      await settle(tester);
+
+      expect(orders.checkouts, isEmpty);
+      expect(cart.items.map((i) => i.deal.id), [1]);
+      expect(notices.single, contains('Deal 2'));
+      expect(controller.isCheckingOut.value, isFalse);
+      await finish(tester);
+    });
+
+    testWidgets('a 410 from checkout renews all holds and retries once',
+        (tester) async {
+      await pumpApp(tester);
+      await addHeld(tester, 1);
+      orders.failures.add(const ApiException(
+          'Reservation expired — stock was released',
+          statusCode: 410));
+
+      controller.checkout();
+      await settle(tester);
+      final renewed = holds.grant();
+      await settle(tester);
+
+      expect(orders.checkouts.length, 2);
+      expect(orders.checkouts.last.single['reservationId'], renewed);
+      expect(cart.items, isEmpty);
+      await finish(tester);
+    });
+
+    testWidgets('checkout waits while a hold is still being placed',
+        (tester) async {
+      await pumpApp(tester);
+      cart.add(_deal(1));
+      await controller.checkout();
+      expect(orders.checkouts, isEmpty);
+      holds.grant();
+      await settle(tester);
     });
   });
 }
