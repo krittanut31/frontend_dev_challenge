@@ -236,6 +236,51 @@ the cold-start checks were done with `--no-enable-impeller --route`.)
 
 ---
 
+## RES-103 · Requests pile up the longer you browse
+
+**Root cause.** `DealDetailsController.onInit` registers
+`ever(cartService.itemCount, ...)` to re-check stock when the cart changes,
+and drops the returned `Worker`. `CartService` is a permanent service, so its
+`itemCount` stream lives for the whole session. When a deal page is closed,
+GetX deletes the controller (`onClose`), but GetX does **not** dispose
+workers created by a controller (`ever` just calls `listen` on the Rx and
+returns the subscription's `cancel` as a `Worker`). The subscription, and
+the closure holding the closed controller, stays on the service's stream.
+Every cart change then runs `_recheckAvailability` for every deal page
+opened earlier in the session: one `GET /deals/:id` each, growing with
+browsing. It also leaks each closed controller.
+
+**Fix.** Keep the `Worker` and dispose it in `onClose`. The open page still
+re-checks its own stock; closed pages stop.
+
+**Alternatives considered.**
+- *Guarding the callback with `isClosed`.* Stops the requests but keeps every
+  subscription and controller alive: still a leak, only quieter.
+- *Moving the re-check into the screen with an `Obx`/`StatefulWidget`.* Would
+  tie it to widget lifecycle, but the controller is the right owner of "keep
+  this deal's stock fresh"; it just has to clean up after itself.
+
+**Edge cases.**
+- A re-check already in flight when the page closes still completes and
+  updates the closed controller's `_quantityLeft`. Harmless (nothing listens)
+  and it does not repeat.
+- Not changed: `_recheckAvailability` has no error handling, so an
+  intermittent API failure surfaces as an uncaught error in the console.
+  Separate from this ticket.
+
+**Verification.** `test/deal_details_lifecycle_test.dart` opens and closes
+deals 1, 2 and 3, then changes the cart. Before the fix it re-fetched
+`[1, 2, 3]`; now nothing. A second test checks the open page still re-checks
+its own deal. On the Android emulator, after opening and closing two deals
+and adding a third to the bag, the log shows a single `GET /deals/:id` for
+the open deal.
+
+This is also my answer to Q1's "name a bug": RES-103 (and RES-102) exist
+because a subscription or timer was treated as if it shared the owner's
+lifecycle.
+
+---
+
 ## AI usage log
 
 _To fill in as I go._
