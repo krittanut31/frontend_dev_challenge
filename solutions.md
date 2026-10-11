@@ -31,12 +31,19 @@ when the box was cleared would repopulate the empty screen.
 1. Each search gets an increasing id; a response (or error) is applied only if
    no newer search has started since. This is what fixes the bug: the result
    always matches the latest query, regardless of response order.
-2. Keystrokes are debounced by 300 ms with a GetX `debounce` worker, so fast
-   typing sends one request instead of one per letter. This is load
-   reduction, not the fix: a user who pauses longer than 300 ms between
-   letters still produces overlapping requests, which (1) handles.
+2. Keystrokes are debounced by 300 ms with a `Timer` owned by the
+   controller, so fast typing sends one request instead of one per letter.
+   This is load reduction, not the fix: a user who pauses longer than 300 ms
+   between letters still produces overlapping requests, which (1) handles.
+   The timer is cancelled in `onClose`.
 
-The worker is registered in `onInit`, so it is disposed with the controller.
+The first version used GetX's `debounce` worker and assumed it was disposed
+with the controller. Reading `get` 4.7.3 showed that is wrong twice over:
+workers are never disposed automatically, and even `Worker.dispose()` only
+cancels the stream subscription, not the debouncer's pending timer. A
+keystroke right before leaving the screen still fired a search on the closed
+controller. A plain `Timer` can be cancelled, so I switched to it (follow-up
+`[RES-101]` commit, with a test).
 
 **Alternatives considered.**
 - *Debounce only.* Rejected: it narrows the window but does not close it,
@@ -60,7 +67,8 @@ The worker is registered in `onInit`, so it is disposed with the controller.
 
 **Verification.** `test/search_deals_controller_test.dart` drives the
 controller with a fake repo whose responses resolve in an order the test
-controls. All four tests failed on the original code and pass after the fix.
+controls. The four race tests failed on the original code and pass after the
+fix; a fifth checks that closing the screen cancels a pending search.
 Manually, on the Android emulator, typing "sushi" letter by letter now logs a
 single `GET /deals/search?q=sushi` and shows only sushi deals.
 

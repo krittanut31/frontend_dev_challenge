@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:get/get.dart';
 
 import '../../model/deal_model.dart';
@@ -15,22 +17,25 @@ class SearchDealsController extends GetxController {
   final isLoading = false.obs;
   final hasSearched = false.obs;
 
-  final _query = ''.obs;
+  /// Own timer rather than GetX's `debounce` worker: disposing that worker
+  /// does not cancel a pending call, so a search could still fire after
+  /// the screen is closed.
+  Timer? _debounceTimer;
 
   /// Incremented for every search started. A response is applied only if no
   /// newer search has started since, because responses can arrive out of
   /// order (shorter queries take longer on the backend).
   int _latestSearchId = 0;
 
-  @override
-  void onInit() {
-    super.onInit();
-    // Worker is disposed together with the controller.
-    debounce(_query, _search, time: _debounceDuration);
+  void onQueryChanged(String query) {
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(_debounceDuration, () => _search(query));
   }
 
-  void onQueryChanged(String query) {
-    _query.value = query;
+  @override
+  void onClose() {
+    _debounceTimer?.cancel();
+    super.onClose();
   }
 
   Future<void> _search(String query) async {
