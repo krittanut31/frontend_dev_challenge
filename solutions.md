@@ -554,6 +554,79 @@ logged 35 `deal_impression` events and four `POST /analytics/batch` calls
 
 ---
 
+## F-3 · Stock reservations with optimistic UI
+
+**Optimistic add and reconciliation.** `CartService` changes a line at
+once and requests the hold in the background (`isReserving` shows
+"Reserving…"). Each line's hold is "what the backend has promised":
+- success: the new hold replaces the old one, which is released;
+- failure (409 or anything else): the line goes back to the quantity its
+  last live hold covers. A new line with no hold is removed. The user gets
+  a plain message ("We couldn't hold Deal X for you: someone may have just
+  taken the last one. It was removed from your bag.") through
+  `CartService.notices`, shown by `CartNoticeService` as a snackbar on any
+  screen. The cart itself makes no UI calls.
+- Out-of-order responses (fast taps on +) are handled like RES-101: each
+  request has an id, and only the latest one for a line is applied. A late
+  older hold is released, unless it covers more than the line's current
+  hold, in which case it is kept as the fallback so a failure of the newer
+  request rolls back to it instead of removing the line.
+- Reducing quantity re-reserves the smaller amount and releases the bigger
+  hold. If that request fails the bigger hold still covers the line, so
+  nothing is rolled back. Removing a line releases its hold
+  (fire-and-forget; an unreleased hold still expires on its own).
+
+**Per-line time left.** `HoldStatus` shows "Held for 4:32" (red under a
+minute), driven by the shared `ClockService` from F-1, inside its own
+`Obx`.
+
+**Checkout.** Disabled while a hold is in flight (its id is needed). It
+passes each line's `reservationId` (as before, via `OrderRepo.checkout`).
+
+**Decision: what happens when a hold expires while the user is in the app.**
+- *The hold is allowed to expire.* Five minutes is the backend's promise to
+  every other shopper; renewing holds silently for as long as the app is
+  open would keep last items away from people who could buy them. This is a
+  food-waste marketplace: stock that sits in an idle bag is worse than stock
+  someone else buys.
+- *The line stays in the bag*, marked "Hold expired" with a "Reserve again"
+  button. Removing it outright would punish someone who just paused for a
+  few minutes and is likely to still get the item.
+- *Checkout re-reserves expired lines before paying.* If every line can be
+  held again, checkout continues as normal. If a line cannot, it is removed
+  with a message and **checkout stops**, so the user sees the changed bag
+  before paying for it. Silently paying for a smaller bag than the one on
+  screen is the outcome I treated as wrong.
+- *Mid-checkout (410 from the backend).* The hold expired between our check
+  and the order. The bag is unchanged, so all holds are renewed and the order
+  is retried once. If a line cannot be held, it stops as above.
+
+Alternatives I rejected: auto-renewing every hold before expiry (hoards
+stock, see above); dropping expired lines immediately (harsh, and the item
+is often still available); a modal "your hold expired" interruption on any
+screen (noisy for something the user can resolve at checkout).
+
+**Verification.** `test/cart_reservations_test.dart` (12 tests) drives a fake
+reservations backend whose requests the test grants or refuses one by one:
+optimistic add, rollback to nothing and to the held quantity, swap and
+release on quantity change, release on remove, a hold that lands after the
+line was removed, the fast-tap fallback, reservation ids sent at checkout,
+renewal of expired holds before paying, checkout stopping when a line cannot
+be held, the 410 renew-and-retry, and checkout waiting for holds in flight.
+In the app (Android emulator), the backend's intermittent 409 hit the third
+reservation (a second unit of a deal already in the bag): the quantity went
+back to 1 with the message above, the bag showed "Held for 04:36", and
+checkout placed the order with both holds.
+
+**Not handled.**
+- Stock shown on cards (`quantityLeft`) is the listing's value; holds do not
+  change it locally.
+- Holds are not restored after an app restart (the bag is in memory only).
+- A flash sale ending (F-1) removes the line and releases its hold through
+  the same `remove` path.
+
+---
+
 ## AI usage log
 
 _To fill in as I go._

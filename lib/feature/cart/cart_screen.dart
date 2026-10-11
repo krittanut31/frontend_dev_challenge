@@ -4,6 +4,7 @@ import 'package:get/get.dart';
 import '../../app_config.dart';
 import '../shared_widget/the_network_image.dart';
 import 'cart_controller.dart';
+import 'widget/hold_status.dart';
 
 class CartScreen extends GetView<CartController> {
   const CartScreen({super.key});
@@ -56,6 +57,7 @@ class CartScreen extends GetView<CartController> {
                                   fontSize: 13,
                                   color: AppConfig.primaryGreen,
                                   fontWeight: FontWeight.w600)),
+                          HoldStatus(item: item),
                         ],
                       ),
                     ),
@@ -103,7 +105,9 @@ class CartScreen extends GetView<CartController> {
               const SizedBox(width: 24),
               Expanded(
                 child: FilledButton(
-                  onPressed: controller.isCheckingOut.value
+                  // Wait for holds in flight: checkout needs their ids.
+                  onPressed: controller.isCheckingOut.value ||
+                          cart.hasPendingHolds
                       ? null
                       : controller.checkout,
                   child: controller.isCheckingOut.value
