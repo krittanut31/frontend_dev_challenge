@@ -28,6 +28,9 @@ class DealDetailsController extends GetxController {
   final _quantityLeft = RxnInt();
   int? get quantityLeft => _quantityLeft.value;
 
+  /// Listens to the app-wide [CartService], which outlives this controller.
+  late final Worker _cartWorker;
+
   @override
   void onInit() {
     super.onInit();
@@ -46,7 +49,16 @@ class DealDetailsController extends GetxController {
     });
     // Whenever the cart changes, re-check this deal's remaining stock so the
     // details screen never shows stale availability.
-    ever(cartService.itemCount, (_) => _recheckAvailability());
+    _cartWorker =
+        ever(cartService.itemCount, (_) => _recheckAvailability());
+  }
+
+  @override
+  void onClose() {
+    // GetX does not dispose workers with the controller. Without this, every
+    // deal page ever opened keeps re-fetching on each cart change.
+    _cartWorker.dispose();
+    super.onClose();
   }
 
   Future<void> loadDeal() async {
